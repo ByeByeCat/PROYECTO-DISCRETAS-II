@@ -1,0 +1,17 @@
+# No terminales
+
+S A
+
+# Terminales
+
+a b
+
+# Símbolo inicial
+
+S
+
+# Producciones
+
+S -> a A
+A -> a A
+A -> b

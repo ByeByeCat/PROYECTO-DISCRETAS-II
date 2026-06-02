@@ -1,0 +1,18 @@
+# No terminales
+
+S NP VP
+
+# Terminales
+
+America es un continente
+
+# Símbolo inicial
+
+S
+
+# Producciones
+
+S -> NP VP
+NP -> America
+VP -> es NP
+NP -> un continente
