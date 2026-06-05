@@ -1,6 +1,6 @@
 # ============================================================
-# Validador de Tramas TCP/IP mediante Máquina de Estados Finita (FSM)
-# Proyecto Final — Matemáticas Discretas II
+# tramas_module.py
+# Validador de Tramas TCP/IP mediante Máquina de Estados Finita (FSM) 
 # ============================================================
 
 import tkinter as tk
@@ -41,11 +41,11 @@ from tkinter import scrolledtext
 #  LEYENDO_PREAMBULO  │ bit_pos == 13              │ LEYENDO_CONTROL
 #  LEYENDO_CONTROL    │ acumulados < 4             │ LEYENDO_CONTROL
 #  LEYENDO_CONTROL    │ acumulados==4 ∧ C1 ∧ C2   │ TRAMA_VALIDA
-#  LEYENDO_CONTROL    │ acumulados==4 ∧ ¬(C1 ∧ C2)│ TRAMA_INVALIDA
+#  LEYENDO_CONTROL    │ acumulados==4 ∧ ¬(C1∧C2)  │ TRAMA_INVALIDA
 #  TRAMA_VALIDA       │ cualquier bit              │ FIN_TRAMA
 #  TRAMA_INVALIDA     │ cualquier bit              │ FIN_TRAMA
 #  FIN_TRAMA          │ bit_pos < 31               │ FIN_TRAMA
-#  FIN_TRAMA          │ bit_pos == 31              │ INICIO  (nueva trama)
+#  FIN_TRAMA          │ bit_pos == 31              │ INICIO (nueva trama)
 #
 # ─── Condiciones de validez de una trama ──────────────────
 #
@@ -117,13 +117,15 @@ class FSM:
     de validez definidas por el protocolo.
 
     Atributos internos:
-        lista_validacion (list[int]): Valores de referencia L[0..n-1].
-        estado (str):                 Estado actual de la FSM (∈ Q).
-        bit_actual (int):             Posición del bit en la trama (0-31).
-        bits_control (list[int]):     Acumulador de bits del campo de control.
-        trama_num (int):              Índice de la trama en proceso.
-        resultados (list[bool]):      Veredicto de cada trama procesada.
-        detalles (list[dict]):        Info detallada de cada evaluación (para GUI).
+        lista_validacion  (list[int]): Valores de referencia L[0..n-1].
+        estado            (str):       Estado actual de la FSM (∈ Q).
+        bit_actual        (int):       Posición del bit en la trama (0-31).
+        bits_control      (list[int]): Acumulador de bits del campo de control.
+        trama_num         (int):       Índice de la trama en proceso.
+        resultados        (list[bool]):Veredicto de cada trama procesada.
+        detalles          (list[dict]):Info detallada de cada evaluación (GUI).
+        _resultado_actual (bool):      Guarda el resultado de la trama actual
+                                       para usarlo en _fin_trama().
     """
 
     # ── Constantes del protocolo ──────────────────────────────────────────
@@ -139,8 +141,6 @@ class FSM:
     # BITS_POR_TRAMA: longitud de cada trama.
     #   El enunciado la reduce de 64 a 32 bits por motivos académicos.
     BITS_POR_TRAMA = 32
-
-    # ─────────────────────────────────────────────────────────────────────
 
     def __init__(self, lista_validacion):
         """
@@ -158,6 +158,13 @@ class FSM:
         self.trama_num        = 0                  # Número de la trama en curso (índice)
         self.resultados       = []                 # True=válida / False=inválida por trama
         self.detalles         = []                 # Historial detallado para la GUI
+
+        # _resultado_actual guarda el veredicto (True/False) de la trama que
+        # se está procesando. Se establece en _evaluar_condiciones() y se usa
+        # en _fin_trama(). Esto es necesario porque cuando _fin_trama() se
+        # ejecuta el estado ya es FIN_TRAMA (no TRAMA_VALIDA), por lo que NO
+        # se puede deducir el resultado del estado en ese momento.
+        self._resultado_actual = False
 
     # ──────────────────────────────────────────────────────────────────────
     # FUNCIÓN DE TRANSICIÓN PRINCIPAL:  δ(estado, bit) → nuevo_estado
@@ -196,14 +203,14 @@ class FSM:
 
         # ── δ(LEYENDO_CONTROL, bit) ───────────────────────────────────────
         # Acumulamos bits del campo de control hasta completar los 4.
-        # El bit 13 ya fue guardado en la transición desde PREAMBULO,
+        # El bit 13 ya fue guardado en la transición desde LEYENDO_PREAMBULO,
         # por lo que aquí comenzamos desde el bit 14 en adelante.
         elif self.estado == Estados.LEYENDO_CONTROL:
             self.bits_control.append(bit)    # Guardamos el bit actual
 
             # ¿Ya acumulamos los 4 bits del campo de control?
             if len(self.bits_control) == self.NUM_BITS_CONTROL:
-                # Evaluamos C1 y C2, y transitamos a VALIDA o INVALIDA
+                # Evaluamos C1 y C2, y transitamos al estado correcto
                 self._evaluar_condiciones()
 
         # ── δ(TRAMA_VALIDA | TRAMA_INVALIDA, bit) = FIN_TRAMA ────────────
@@ -245,12 +252,12 @@ class FSM:
           MÚLTIPLO DE 5.
           Ejemplo: B=12, L=3 → B+L=15 → 15 mod 5 = 0  ✅
 
-        Transita a TRAMA_VALIDA si C1 y C2 se cumplen simultáneamente;
-        de lo contrario transita a TRAMA_INVALIDA.
+        Además de transitar al estado correcto, guarda el resultado en
+        self._resultado_actual para que _fin_trama() pueda usarlo.
         """
         # Medida de seguridad: verificamos que exista un valor L[i] para esta trama.
-        # Normalmente el UI lo garantiza, pero lo controlamos por robustez.
         if self.trama_num >= len(self.lista_validacion):
+            self._resultado_actual = False
             self.estado = Estados.TRAMA_INVALIDA
             return
 
@@ -277,7 +284,15 @@ class FSM:
         # La trama es válida solo si AMBAS condiciones se cumplen
         es_valida = condicion1 and condicion2
 
-        # ── Guardamos el detalle de esta evaluación para mostrar en GUI ───
+        # ── Guardamos el veredicto en _resultado_actual ───────────────────
+        # IMPORTANTE: este atributo es el que usa _fin_trama() para registrar
+        # el resultado final. No podemos usar self.estado en _fin_trama() porque
+        # para cuando se llama ese método el estado ya es FIN_TRAMA y no
+        # TRAMA_VALIDA. Sin esta variable auxiliar, todos los resultados
+        # serían False sin importar si la trama fue válida o no.
+        self._resultado_actual = es_valida
+
+        # ── Guardamos el detalle de esta evaluación para la GUI ───────────
         self.detalles.append({
             'trama':         self.trama_num + 1,                   # Número de trama (1-indexed)
             'bits_control':  ''.join(map(str, self.bits_control)),  # String de bits de control
@@ -286,7 +301,7 @@ class FSM:
             'suma':          suma,                                   # B + L
             'cond1':         condicion1,                             # ¿Cumple C1?
             'cond2':         condicion2,                             # ¿Cumple C2?
-            'valida':        es_valida                               # ¿Trama válida en total?
+            'valida':        es_valida                               # ¿Trama válida?
         })
 
         # ── Transición final según el resultado ───────────────────────────
@@ -303,18 +318,29 @@ class FSM:
         Se invoca automáticamente cuando se han procesado los 32 bits
         de la trama actual. Realiza dos acciones:
 
-        1. Registra el veredicto final en self.resultados
-           (True si terminó en TRAMA_VALIDA, False en otro caso).
+        1. Registra el veredicto final en self.resultados usando
+           self._resultado_actual (guardado en _evaluar_condiciones).
+
+           ─── ¿Por qué NO usar self.estado aquí? ───────────────────────
+           Cuando _fin_trama() se ejecuta (después del bit 31), el
+           estado de la FSM ya es FIN_TRAMA, NO TRAMA_VALIDA. Esto ocurre
+           porque la transición TRAMA_VALIDA → FIN_TRAMA sucede en el bit 17,
+           mucho antes de llegar al bit 31. Por eso debemos usar
+           self._resultado_actual, que fue guardado en el momento correcto
+           (cuando se evaluaron las condiciones en el bit 16).
+           ─────────────────────────────────────────────────────────────
+
         2. Reinicia los contadores y regresa al estado INICIO (q0),
            dejando la FSM lista para procesar la siguiente trama.
-
-        Este reinicio es lo que permite a la FSM procesar múltiples
-        tramas en secuencia sin necesidad de recrearla.
         """
-        # Guardamos el resultado: True = VÁLIDA, False = cualquier otro estado
-        self.resultados.append(self.estado == Estados.TRAMA_VALIDA)
+        # Usamos _resultado_actual porque cuando llegamos aquí
+        # self.estado ya es FIN_TRAMA, no TRAMA_VALIDA.
+        self.resultados.append(self._resultado_actual)
 
-        # Avanzamos al índice de la siguiente trama en la lista de validación
+        # Reseteamos el resultado para la próxima trama
+        self._resultado_actual = False
+
+        # Avanzamos al índice de la siguiente trama
         self.trama_num += 1
 
         # Reseteamos los contadores internos de la trama actual
@@ -439,28 +465,27 @@ def procesar(valid_entries, trama_entries, output):
     # ── Paso 1: Leer y validar la lista de validación ────────────────────
     lista_validacion = []
     for i, entry in enumerate(valid_entries):
-        bits = entry.get().strip()        # Leemos el valor e ignoramos espacios
+        bits = entry.get().strip()        # Leemos e ignoramos espacios
         if not validar_4bits(bits):
             output.insert('end',
                 f"⚠️  Error en lista[{i+1}]: '{bits}' "
                 f"no es un valor válido de 4 bits binarios.\n")
-            return                        # Detenemos el proceso si hay un error
+            return                        # Detenemos si hay un error
         # int(bits, 2) convierte el string binario a entero: '0010' → 2
         lista_validacion.append(int(bits, 2))
 
     # ── Paso 2: Leer y validar las tramas ────────────────────────────────
     tramas = []
     for i, entry in enumerate(trama_entries):
-        bits = entry.get().strip()        # Leemos la trama e ignoramos espacios
+        bits = entry.get().strip()        # Leemos e ignoramos espacios
         if not validar_32bits(bits):
             output.insert('end',
                 f"⚠️  Error en trama {i+1}: "
                 f"debe tener exactamente 32 bits binarios.\n")
-            return                        # Detenemos el proceso si hay un error
+            return                        # Detenemos si hay un error
         tramas.append(bits)
 
-    # Verificamos que la lista de validación tenga suficientes entradas
-    # (debe haber al menos un valor L[i] por cada trama)
+    # Verificamos que haya suficientes valores de validación
     if len(tramas) > len(lista_validacion):
         output.insert('end',
             "⚠️  La lista de validación debe tener "
@@ -484,7 +509,7 @@ def procesar(valid_entries, trama_entries, output):
     output.insert('end', "  RESULTADOS DE EVALUACIÓN — FSM\n")
     output.insert('end', f"{'═'*64}\n")
 
-    # Encabezado de la tabla de resultados
+    # Encabezado de la tabla
     output.insert('end',
         f"  {'#':<5}{'Bits[13:16]':<13}{'Val':>5}"
         f"{'Lista':>7}{'Suma':>6}{'C1':>4}{'C2':>4}  Estado\n")
@@ -501,7 +526,9 @@ def procesar(valid_entries, trama_entries, output):
             f"{d['valor_control']:>5}{d['valor_lista']:>7}"
             f"{d['suma']:>6}{c1:>4}{c2:>4}  {icono} {estado}\n")
 
-    # ── Paso 6: Mostrar el resumen global de la transmisión ───────────────
+    # ── Paso 6: Mostrar el resumen global ──────────────────────────────
+    # obtener_resumen() usa self.resultados, que fue correctamente
+    # poblado gracias a _resultado_actual en _fin_trama().
     r = fsm.obtener_resumen()
     output.insert('end', f"  {SEP}\n")
     output.insert('end', f"  Total tramas procesadas : {r['total']}\n")
@@ -555,18 +582,17 @@ def main():
              font=('Arial', 11), bg="#f4f4f4").grid(row=0, column=0, padx=6)
 
     # Variable que almacena el número de tramas elegido por el usuario
-    n_var = tk.StringVar(value="5")   # 5 es el mínimo permitido por el enunciado
+    n_var = tk.StringVar(value="5")   # 5 es el mínimo permitido
     tk.Entry(cfg, textvariable=n_var, width=4,
              font=('Consolas', 12), justify='center').grid(row=0, column=1, padx=4)
 
-    # Listas que almacenan referencias a los Entry widgets generados dinámicamente.
-    # Se crean vacías aquí y se rellenan en generar_campos().
+    # Listas que almacenan referencias a los Entry widgets generados dinámicamente
     valid_entries = []   # Entradas para la lista de validación
     trama_entries = []   # Entradas para las tramas de 32 bits
 
     # ── Área de entradas con scroll ───────────────────────────────────────
-    # Usamos tk.Canvas + tk.Scrollbar para que la ventana soporte entre
-    # 5 y 20 filas sin crecer descontroladamente.
+    # Usamos tk.Canvas + tk.Scrollbar para soportar entre 5 y 20 filas
+    # sin que la ventana crezca descontroladamente.
     wrap = tk.Frame(root, bg="#f4f4f4")
     wrap.pack(fill='both', expand=True, padx=10, pady=4)
 
@@ -581,26 +607,24 @@ def main():
     inner = tk.Frame(canvas, bg="#f4f4f4")
     cwin  = canvas.create_window((0, 0), window=inner, anchor='nw')
 
-    # Actualizamos la región desplazable cuando cambia el contenido del inner frame
+    # Actualizamos la región desplazable cuando cambia el contenido
     inner.bind('<Configure>',
                lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
 
-    # Ajustamos el ancho del inner frame al ancho actual del Canvas
+    # Ajustamos el ancho del frame interior al ancho del Canvas
     canvas.bind('<Configure>',
                 lambda e: canvas.itemconfig(cwin, width=e.width))
 
     # ── Función para generar los campos de entrada dinámicamente ──────────
     def generar_campos():
         """
-        Lee el número de tramas ingresado por el usuario y genera
-        dinámicamente los Entry widgets para la lista de validación y
-        las tramas de 32 bits.
+        Lee el número de tramas ingresado y genera dinámicamente
+        los Entry widgets para la lista de validación y las tramas.
 
-        Elimina los campos anteriores antes de crear los nuevos, lo que
-        permite al usuario cambiar el número de tramas sin reiniciar
-        la ventana.
+        Elimina los campos anteriores antes de crear los nuevos,
+        lo que permite cambiar el número de tramas sin reiniciar.
         """
-        # Eliminamos los widgets anteriores del frame interior
+        # Eliminamos los widgets anteriores
         for w in inner.winfo_children():
             w.destroy()
         valid_entries.clear()
@@ -647,7 +671,7 @@ def main():
               command=generar_campos
               ).grid(row=0, column=2, padx=10)
 
-    # Generamos los campos iniciales con el valor por defecto (5 tramas)
+    # Generamos los campos iniciales con 5 tramas (valor por defecto)
     generar_campos()
 
     # ── Área de resultados ────────────────────────────────────────────────
@@ -673,7 +697,7 @@ def main():
 
     # Botón para volver al menú principal (main.py)
     # __import__('main') carga el módulo main.py en tiempo de ejecución
-    # y .main() llama a su función principal para reabrir el menú.
+    # y .main() llama a su función para reabrir el menú principal
     tk.Button(btns,
               text="⏹ Volver al menú",
               font=('Arial', 11), bg="#ffcccc",
